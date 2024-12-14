@@ -6,8 +6,10 @@ class Socket extends Emitter<string, BasePacket> {
   // ? Fragment size used for packet fragmentation
   public static FRAGMENT_SIZE = 128;
 
+  // ? Socket pack registry to save the discovered packs.
   public readonly packRegistry: PackRegistry;
 
+  // ? Socket pack data
   private pack: Pack;
 
   // ? Used to save and join packet fragments
@@ -29,8 +31,12 @@ class Socket extends Emitter<string, BasePacket> {
     this.sendPacket(this.pack as unknown as DiscoveryPacket);
   }
 
-  public async sendPacket(packet: BasePacket): Promise<void> {
-    // NOTE: Reefer to line 50
+  /**
+   * Sends a packet to all the connections
+   * @param packet The packet that will be sent
+   */
+  public async sendPacket(packet: BasePacket) {
+    // NOTE: Reefer to line 65
     const packetLength = JSON.stringify(packet).length;
 
     if (packetLength > Socket.FRAGMENT_SIZE) {
@@ -47,10 +53,20 @@ class Socket extends Emitter<string, BasePacket> {
     this.dimension.runCommandAsync(`scriptevent ${this.pack.prefix}:${packet.identifier} ${JSON.stringify(packet)}`);
   }
 
+  /**
+   * Gets the pack from the pack registry using the given identifier
+   * @param packId The pack identifier of the packet to retrieve
+   * @returns The pack if this pack was discovered
+   */
   public getPack(packId: string): Pack | undefined {
     return this.packRegistry.get(packId);
   }
 
+  /**
+   * Fragments a packet based on <Socket.FRAGMENT_SIZE>
+   * @param packet The packet that will be fragmented
+   * @returns the packet frames
+   */
   private async fragment(packet: BasePacket): Promise<Array<FragmentPacket>> {
     // Stringify the packet
     const serializedPacket = JSON.stringify(this.resolvePacket(packet));
@@ -80,6 +96,11 @@ class Socket extends Emitter<string, BasePacket> {
     return fragments;
   }
 
+  /**
+   * Handles the incoming packets
+   * @param packetId The packet that is being received
+   * @param payload The packet payload
+   */
   private handleIncoming(packetId: string, payload: object): void {
     // Get the packet payload
     const parsedPayload = payload as BasePacket;
@@ -89,23 +110,28 @@ class Socket extends Emitter<string, BasePacket> {
 
     // If the payload is a fragment, then handle it as a fragment
     if (parsedPayload.isFragment) {
-      this.handleFrame(packetId, parsedPayload as FragmentPacket);
-      return;
+      // ? Handle the fragment and skip the fragment packet
+      return this.handleFrame(packetId, parsedPayload as FragmentPacket);
     }
 
-    // Emit the packet to the listeners
+    // ? Emit the per packet event
     this.emit(parsedPayload);
+
+    // ? Emit the global packet event
     this.emit({
       packetId: 'packet',
       payload: parsedPayload,
     });
 
-    // Global Packets
+    // ? Global packets listeners
     switch (packetId) {
       case 'global:discovery': {
+        // ? Get the payload as a DiscoveryPacket
         const discoveryPacket = parsedPayload as DiscoveryPacket;
+        // ? Destruct the packet fields
         const { identifier, name, description, packets, prefix, version } = discoveryPacket;
 
+        // ? Register the packet to the registry
         this.packRegistry.set(identifier, {
           name,
           prefix,
@@ -120,25 +146,39 @@ class Socket extends Emitter<string, BasePacket> {
       }
 
       case 'global:entities': {
+        // ? Get the packet as an EntitiesRegistryPacket
         const entitiesRegistryPacket = parsedPayload as EntitiesRegistryPacket;
+        // ? Get the source pack of the packet
         const pack = this.packRegistry.get(entitiesRegistryPacket.source);
 
+        // ? Return if the packet is not found
         if (!pack) return;
+
+        // ? Update the registered entities in the pack
         pack.entities.push(...entitiesRegistryPacket.entityIds);
         break;
       }
 
       case 'global:items': {
+        // ? Get the packet as an ItemsRegistryPacket
         const itemsRegistryPacket = parsedPayload as ItemsRegistryPacket;
+        // ? Get the source pack of the packet
         const pack = this.packRegistry.get(itemsRegistryPacket.source);
 
+        // ? Return if the packet is not found
         if (!pack) return;
+        // ? Update the registered items in the pack
         pack.entities.push(...itemsRegistryPacket.itemIds);
         break;
       }
     }
   }
 
+  /**
+   * Handles a FragmentPacket
+   * @param packetId The fragmented packet identifier
+   * @param payload The fragment of the packet
+   */
   private handleFrame(packetId: string, payload: FragmentPacket): void {
     // Get the split list for the packet id or create a new one
     const splitList = this.fragments.get(packetId) ?? [];
@@ -164,6 +204,11 @@ class Socket extends Emitter<string, BasePacket> {
     this.fragments.set(packetId, splitList);
   }
 
+  /**
+   * Resolves the packet identifier for the global packets.
+   * @param packet The packet to resolve its packet identifier
+   * @returns The packet with the resolved identifier
+   */
   private resolvePacket(packet: BasePacket): BasePacket {
     switch (true) {
       case 'packets' in packet: {
